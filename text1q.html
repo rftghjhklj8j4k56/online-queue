@@ -12,7 +12,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
         }
 
@@ -24,11 +24,27 @@
             max-width: 350px;
             text-align: center;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 呼叫插播的樣式 */
+        .recall-banner {
+            background: #ff9800;
+            color: white;
+            padding: 10px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            font-weight: bold;
+            display: none;
+            animation: slideDown 0.5s;
         }
 
         input {
             width: 80%;
-            padding: 10px;
+            padding: 12px;
             margin: 15px 0;
             border: 1px solid #ddd;
             border-radius: 6px;
@@ -44,44 +60,62 @@
             font-size: 1rem;
             cursor: pointer;
             width: 100%;
+            font-weight: bold;
         }
 
         button:disabled {
             background: #ccc;
         }
 
-        .info {
-            margin-top: 20px;
-            font-size: 0.9rem;
-            color: #666;
-        }
-
         .ticket-box {
             background: #e8f5e9;
-            padding: 15px;
+            padding: 20px;
             margin-top: 20px;
             border-radius: 8px;
             display: none;
-            border: 1px dashed #4caf50;
+            border: 2px dashed #4caf50;
         }
 
+        .ticket-box.skipped {
+            background: #ffebee;
+            border-color: #f44336;
+        }
+
+        /* 過號時變紅色 */
+
         .ticket-number {
-            font-size: 2.5rem;
+            font-size: 3rem;
             color: #2e7d32;
             font-weight: bold;
             margin: 5px 0;
         }
 
+        .ticket-status {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
         .current-status {
-            margin-top: 20px;
+            margin-top: 25px;
             padding-top: 20px;
             border-top: 1px solid #eee;
         }
 
         .big-status {
-            font-size: 1.5rem;
+            font-size: 2rem;
             font-weight: bold;
-            color: #d32f2f;
+            color: #333;
+        }
+
+        @keyframes slideDown {
+            from {
+                top: -50px;
+            }
+
+            to {
+                top: 0;
+            }
         }
     </style>
 </head>
@@ -89,34 +123,35 @@
 <body>
 
     <div class="card">
+        <div id="recall-banner" class="recall-banner">🔔 重呼：請 <span id="recall-num"></span> 號到櫃台</div>
+
         <h2>👋 歡迎光臨</h2>
 
         <div id="input-section">
-            <p>請輸入您的稱呼以取號</p>
-            <input type="text" id="username" placeholder="例：陳先生 / 小美">
+            <input type="text" id="username" placeholder="請輸入稱呼 (例: 陳先生)">
             <button id="btn-take">領取號碼牌</button>
         </div>
 
         <div id="ticket-section" class="ticket-box">
             <div>您的號碼</div>
             <div class="ticket-number" id="my-number">--</div>
-            <div id="my-name-display"></div>
-            <p style="font-size:0.8rem; color:#888;">請留意下方叫號</p>
+            <div id="my-name-display" style="font-weight:bold; margin-bottom:5px;"></div>
+            <div class="ticket-status" id="my-status-text">請留意下方叫號</div>
         </div>
 
         <div class="current-status">
-            <p>目前叫號</p>
+            <p style="color:#888; margin:0;">目前叫號</p>
             <div class="big-status" id="display-current">0</div>
-            <p class="info">前方等待人數: <span id="display-waiting">0</span></p>
+            <p style="color:#666; font-size:0.9rem;">等待人數: <span id="display-waiting">0</span></p>
         </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue, get, update, runTransaction }
+        import { getDatabase, ref, onValue, update, runTransaction }
             from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-        // --- 請貼上你的 Firebase Config ---
+        // --- 設定檔 (請換成你的) ---
         const firebaseConfig = {
             apiKey: "AIzaSyDnQEorAx3Ld2Pi3AF9lfdDeO6i5FYlZpo",
             authDomain: "queue-6b0e1.firebaseapp.com",
@@ -126,67 +161,138 @@
             messagingSenderId: "209096503140",
             appId: "1:209096503140:web:4fef89cd385fa7258e5471"
         };
-
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        const btnTake = document.getElementById('btn-take');
-        const inputName = document.getElementById('username');
-        const inputSection = document.getElementById('input-section');
-        const ticketSection = document.getElementById('ticket-section');
+        let myTicket = localStorage.getItem('myTicket'); // 嘗試從瀏覽器記憶讀取
+        let myName = localStorage.getItem('myName');
 
-        let myTicket = null;
+        // DOM
+        const elInput = document.getElementById('input-section');
+        const elTicket = document.getElementById('ticket-section');
+        const elMyNum = document.getElementById('my-number');
+        const elMyName = document.getElementById('my-name-display');
+        const elStatusText = document.getElementById('my-status-text');
+        const elCurrent = document.getElementById('display-current');
 
-        // 監聽目前叫號狀況
-        onValue(ref(db, 'status'), (snapshot) => {
-            const data = snapshot.val() || { current: 0, max: 0 };
-            document.getElementById('display-current').innerText = data.current;
+        // 如果之前取過號，直接顯示
+        if (myTicket) {
+            showTicketView(myTicket, myName);
+        }
 
-            let waiting = data.max - data.current;
+        // 監聽全域資料
+        onValue(ref(db), (snapshot) => {
+            const data = snapshot.val() || {};
+            const status = data.status || { current: 0, max: 0 };
+            const skipped = data.skipped || {};
+            const recall = data.recall;
+
+            // 1. 更新目前叫號
+            elCurrent.innerText = status.current;
+            const waiting = status.max - status.current;
             document.getElementById('display-waiting').innerText = waiting > 0 ? waiting : 0;
+
+            // 2. 處理重呼橫幅
+            const banner = document.getElementById('recall-banner');
+            if (recall) {
+                banner.style.display = 'block';
+                document.getElementById('recall-num').innerText = recall.number;
+            } else {
+                banner.style.display = 'none';
+            }
+
+            // 3. 檢查自己的狀態
+            if (myTicket) {
+                const ticketNum = parseInt(myTicket);
+
+                // 狀態判定優先順序：
+                // A. 是否正在被重呼
+                if (recall && recall.number == ticketNum) {
+                    setMyStatus('alert', '🔔 櫃台正在重呼您的號碼！請立即前往！');
+                }
+                // B. 是否在過號名單中
+                else if (skipped[ticketNum]) {
+                    setMyStatus('error', '⚠️ 您已過號！請告知櫃台人員重呼。');
+                }
+                // C. 是否正在被叫號
+                else if (status.current == ticketNum) {
+                    setMyStatus('active', '🎉 輪到您了！請前往櫃台。');
+                }
+                // D. 是否還在等待
+                else if (ticketNum > status.current) {
+                    const ahead = ticketNum - status.current - 1;
+                    setMyStatus('normal', `前方還有 ${ahead} 人等待`);
+                }
+                // E. 已經過號但沒被標記 (很少見，通常是被 reset)
+                else {
+                    setMyStatus('error', '號碼已過');
+                }
+            }
         });
 
-        // 取號功能
-        btnTake.addEventListener('click', async () => {
-            const name = inputName.value.trim();
-            if (!name) return alert("請輸入稱呼！");
+        // 取號邏輯
+        document.getElementById('btn-take').addEventListener('click', async () => {
+            const nameInput = document.getElementById('username');
+            const name = nameInput.value.trim();
+            if (!name) return alert("請輸入稱呼");
 
-            btnTake.disabled = true;
-            btnTake.innerText = "取號中...";
-
-            // 使用 Transaction 確保多人同時點擊時號碼不會重複
-            const statusRef = ref(db, 'status');
+            document.getElementById('btn-take').disabled = true;
 
             try {
-                // 1. 取得新號碼並更新計數器
-                const result = await runTransaction(statusRef, (currentData) => {
+                // Transaction 確保號碼不重複
+                const result = await runTransaction(ref(db, 'status'), (currentData) => {
                     if (currentData === null) return { current: 0, max: 1 };
                     return { ...currentData, max: currentData.max + 1 };
                 });
 
-                const newNumber = result.snapshot.val().max;
+                const newNum = result.snapshot.val().max;
 
-                // 2. 將名字寫入資料庫
+                // 寫入名字
                 const updates = {};
-                updates[`tickets/${newNumber}`] = name;
+                updates[`tickets/${newNum}`] = name;
                 await update(ref(db), updates);
 
-                // 3. 更新 UI
-                myTicket = newNumber;
-                document.getElementById('my-number').innerText = newNumber;
-                document.getElementById('my-name-display').innerText = `(${name})`;
+                // 儲存到 LocalStorage 防重新整理遺失
+                localStorage.setItem('myTicket', newNum);
+                localStorage.setItem('myName', name);
 
-                inputSection.style.display = 'none';
-                ticketSection.style.display = 'block';
+                showTicketView(newNum, name);
 
-            } catch (error) {
-                console.error(error);
+            } catch (e) {
+                console.error(e);
                 alert("取號失敗，請重試");
-                btnTake.disabled = false;
+                document.getElementById('btn-take').disabled = false;
             }
         });
-    </script>
 
+        function showTicketView(num, name) {
+            myTicket = num;
+            elInput.style.display = 'none';
+            elTicket.style.display = 'block';
+            elMyNum.innerText = num;
+            elMyName.innerText = name;
+        }
+
+        function setMyStatus(type, text) {
+            elStatusText.innerText = text;
+            elTicket.className = 'ticket-box'; // reset class
+
+            if (type === 'error') {
+                elTicket.classList.add('skipped');
+                elStatusText.style.color = '#d32f2f';
+            } else if (type === 'active') {
+                elStatusText.style.color = '#2196f3';
+                elStatusText.style.fontWeight = 'bold';
+            } else if (type === 'alert') {
+                elTicket.style.borderColor = '#ff9800';
+                elTicket.style.backgroundColor = '#fff3e0';
+                elStatusText.style.color = '#e65100';
+                elStatusText.style.fontWeight = 'bold';
+            } else {
+                elStatusText.style.color = '#666';
+            }
+        }
+    </script>
 </body>
 
 </html>

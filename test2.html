@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>櫃台叫號系統</title>
+    <title>櫃台叫號系統 (含過號功能)</title>
     <style>
         body {
             font-family: 'Segoe UI', sans-serif;
@@ -13,84 +13,140 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
-            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
         }
 
         .panel {
             background: #333;
-            padding: 40px;
+            padding: 30px;
             border-radius: 15px;
             text-align: center;
-            min-width: 300px;
+            width: 100%;
+            max-width: 400px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            margin-bottom: 20px;
         }
 
-        h1 {
-            margin: 0 0 20px 0;
-            color: #aaa;
-            font-size: 1.2rem;
-        }
-
+        /* 顯示區 */
         .number-display {
-            font-size: 6rem;
+            font-size: 5rem;
             font-weight: bold;
             color: #4caf50;
             line-height: 1;
+            margin: 10px 0;
+        }
+
+        .number-display.recalling {
+            color: #ff9800;
+            animation: blink 1s infinite;
         }
 
         .name-display {
-            font-size: 2rem;
-            margin: 10px 0 30px 0;
+            font-size: 1.8rem;
+            margin-bottom: 20px;
             color: #fff;
-            height: 50px;
+            height: 40px;
         }
-
-        /* 固定高度避免跳動 */
 
         .info-bar {
             display: flex;
             justify-content: space-between;
             margin-bottom: 20px;
-            color: #888;
+            color: #aaa;
             font-size: 0.9rem;
         }
 
+        /* 按鈕區 */
         .btn-group {
-            display: flex;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 10px;
+            margin-bottom: 10px;
         }
 
         button {
-            flex: 1;
             padding: 15px;
             border: none;
             border-radius: 8px;
-            font-size: 1.1rem;
+            font-size: 1rem;
             cursor: pointer;
             font-weight: bold;
             transition: 0.2s;
+            color: white;
         }
 
         .btn-next {
             background: #2196f3;
-            color: white;
+            grid-column: span 2;
+            font-size: 1.2rem;
         }
 
         .btn-next:hover {
             background: #1976d2;
         }
 
-        .btn-next:disabled {
-            background: #555;
-            cursor: not-allowed;
+        .btn-skip {
+            background: #ff9800;
+            color: #333;
         }
 
+        /* 過號按鈕 */
         .btn-reset {
             background: #d32f2f;
-            color: white;
-            flex: 0.5;
+        }
+
+        /* 過號清單區 */
+        .skipped-area {
+            width: 100%;
+            max-width: 400px;
+            background: #444;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .skipped-title {
+            margin: 0 0 10px 0;
+            font-size: 1rem;
+            color: #ccc;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+        }
+
+        .skipped-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .skipped-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #555;
+            margin-bottom: 8px;
+            padding: 8px 15px;
+            border-radius: 5px;
+        }
+
+        .skipped-info {
+            font-size: 1.1rem;
+        }
+
+        .btn-recall {
+            background: #009688;
+            padding: 5px 15px;
+            font-size: 0.9rem;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0.5;
+            }
         }
     </style>
 </head>
@@ -98,28 +154,35 @@
 <body>
 
     <div class="panel">
-        <h1>櫃台服務窗口</h1>
-
         <div class="info-bar">
-            <span>等待人數: <strong id="waiting-count" style="color:#ff9800">0</strong></span>
-            <span>總取號數: <span id="max-count">0</span></span>
+            <span>等待: <strong id="waiting-count" style="color:#ff9800">0</strong></span>
+            <span>總數: <span id="max-count">0</span></span>
         </div>
+
+        <div id="status-label" style="color: #888; font-size: 0.9rem;">目前叫號</div>
 
         <div class="number-display" id="current-num">0</div>
         <div class="name-display" id="current-name">---</div>
 
         <div class="btn-group">
-            <button class="btn-reset" id="btn-reset">重置</button>
+            <button class="btn-skip" id="btn-skip">過號 (跳過)</button>
+            <button class="btn-reset" id="btn-reset">重置系統</button>
             <button class="btn-next" id="btn-next">叫下一號 🔔</button>
         </div>
     </div>
 
+    <div class="skipped-area">
+        <h3 class="skipped-title">過號清單 (點擊重呼)</h3>
+        <ul id="skipped-list" class="skipped-list">
+        </ul>
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getDatabase, ref, onValue, get, update, set }
+        import { getDatabase, ref, onValue, update, set, remove }
             from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-        // --- 請貼上你的 Firebase Config ---
+        // --- 設定檔 (請換成你的) ---
         const firebaseConfig = {
             apiKey: "AIzaSyDnQEorAx3Ld2Pi3AF9lfdDeO6i5FYlZpo",
             authDomain: "queue-6b0e1.firebaseapp.com",
@@ -133,88 +196,137 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        const elCurrentNum = document.getElementById('current-num');
-        const elCurrentName = document.getElementById('current-name');
-        const elWaiting = document.getElementById('waiting-count');
-        const elMax = document.getElementById('max-count');
-        const btnNext = document.getElementById('btn-next');
-        const btnReset = document.getElementById('btn-reset');
-
+        // 變數與 DOM
         let currentStatus = { current: 0, max: 0 };
         let tickets = {};
+        let skipped = {};
+        let recalling = null; // 目前是否正在重呼
 
-        // 1. 監聽狀態 (status)
-        onValue(ref(db, 'status'), (snapshot) => {
-            currentStatus = snapshot.val() || { current: 0, max: 0 };
-            updateUI();
-        });
+        const elNum = document.getElementById('current-num');
+        const elName = document.getElementById('current-name');
+        const elLabel = document.getElementById('status-label');
+        const elList = document.getElementById('skipped-list');
 
-        // 2. 監聽所有票券資訊 (tickets) - 為了拿到名字
-        onValue(ref(db, 'tickets'), (snapshot) => {
-            tickets = snapshot.val() || {};
+        // 監聽資料庫
+        onValue(ref(db), (snapshot) => {
+            const data = snapshot.val() || {};
+            currentStatus = data.status || { current: 0, max: 0 };
+            tickets = data.tickets || {};
+            skipped = data.skipped || {};
+            recalling = data.recall || null; // 監聽是否有重呼資料
+
             updateUI();
+            updateSkippedList();
         });
 
         function updateUI() {
-            const { current, max } = currentStatus;
-            const waiting = max - current;
+            const waiting = currentStatus.max - currentStatus.current;
+            document.getElementById('waiting-count').innerText = waiting > 0 ? waiting : 0;
+            document.getElementById('max-count').innerText = currentStatus.max;
 
-            elCurrentNum.innerText = current;
-            elMax.innerText = max;
-            elWaiting.innerText = waiting > 0 ? waiting : 0;
-
-            // 顯示目前名字
-            if (current > 0 && tickets[current]) {
-                elCurrentName.innerText = tickets[current];
-            } else if (current === 0) {
-                elCurrentName.innerText = "準備中";
+            // 優先顯示「重呼」狀態
+            if (recalling) {
+                elNum.innerText = recalling.number;
+                elName.innerText = recalling.name;
+                elLabel.innerText = "⚠️ 插播重呼 ⚠️";
+                elLabel.style.color = "#ff9800";
+                elNum.classList.add('recalling');
             } else {
-                elCurrentName.innerText = "無資料";
-            }
-
-            // 如果沒人等待，禁用按鈕
-            btnNext.disabled = (current >= max);
-            if (btnNext.disabled) {
-                btnNext.innerText = "目前無人";
-            } else {
-                btnNext.innerText = "叫下一號 🔔";
+                // 正常顯示目前叫號
+                elNum.innerText = currentStatus.current;
+                elName.innerText = tickets[currentStatus.current] || "---";
+                elLabel.innerText = "目前叫號";
+                elLabel.style.color = "#888";
+                elNum.classList.remove('recalling');
             }
         }
 
-        // 叫號功能
-        btnNext.addEventListener('click', () => {
-            const nextNum = currentStatus.current + 1;
-            if (nextNum > currentStatus.max) return;
-
-            // 更新資料庫
-            update(ref(db, 'status'), {
-                current: nextNum
+        function updateSkippedList() {
+            elList.innerHTML = "";
+            // 遍歷 skipped 物件
+            Object.keys(skipped).forEach(num => {
+                const name = skipped[num];
+                const li = document.createElement('li');
+                li.className = 'skipped-item';
+                li.innerHTML = `
+                <span class="skipped-info">#${num} ${name}</span>
+                <button class="btn-recall" onclick="doRecall(${num}, '${name}')">重呼</button>
+            `;
+                elList.appendChild(li);
             });
 
-            // 語音播報
-            const name = tickets[nextNum] || "來賓";
-            speak(`請 ${nextNum} 號，${name}，到櫃台`);
+            // 把 doRecall 掛載到 window 讓 HTML onclick 讀得到
+            window.doRecall = (num, name) => {
+                // 設定資料庫 recall 欄位
+                set(ref(db, 'recall'), { number: num, name: name });
+                speak(`請 ${num} 號，${name}，到櫃台 (重呼)`);
+            };
+        }
+
+        // 按鈕：叫下一號 (會自動清除重呼狀態)
+        document.getElementById('btn-next').addEventListener('click', () => {
+            const nextNum = currentStatus.current + 1;
+
+            const updates = {};
+            // 1. 清除重呼狀態
+            updates['recall'] = null;
+
+            // 2. 只有當還有人在排隊時，才推進號碼
+            if (nextNum <= currentStatus.max) {
+                updates['status/current'] = nextNum;
+                const name = tickets[nextNum] || "來賓";
+                speak(`請 ${nextNum} 號，${name}，到櫃台`);
+            } else {
+                // 如果沒人了，只清除重呼
+                if (recalling) speak("恢復叫號");
+            }
+
+            update(ref(db), updates);
         });
 
-        // 重置功能
-        btnReset.addEventListener('click', () => {
-            if (confirm("確定要清空所有資料並重置號碼嗎？")) {
-                set(ref(db), {
-                    status: { current: 0, max: 0 },
-                    tickets: {}
-                });
+        // 按鈕：過號 (Skip)
+        document.getElementById('btn-skip').addEventListener('click', () => {
+            const curr = currentStatus.current;
+            if (curr === 0 || curr > currentStatus.max) return alert("目前無人可過號");
+
+            const name = tickets[curr] || "未知";
+            const nextNum = curr + 1;
+
+            const updates = {};
+            // 1. 加入過號名單
+            updates[`skipped/${curr}`] = name;
+            // 2. 清除重呼 (保險起見)
+            updates['recall'] = null;
+            // 3. 直接跳下一號
+            if (nextNum <= currentStatus.max) {
+                updates['status/current'] = nextNum;
+                // 順便語音播報下一位
+                const nextName = tickets[nextNum] || "來賓";
+                setTimeout(() => speak(`請 ${nextNum} 號，${nextName}，到櫃台`), 500);
+            } else {
+                // 只是把目前的人踢掉，但不加號碼(因為後面沒人了)
+                updates['status/current'] = curr; // 保持目前顯示，或者你可以選擇 +1 變成空號
+                alert("已標記過號，但後方無人等待。");
+            }
+
+            update(ref(db), updates);
+        });
+
+        // 按鈕：重置
+        document.getElementById('btn-reset').addEventListener('click', () => {
+            if (confirm("確定重置？資料將清空")) {
+                set(ref(db), { status: { current: 0, max: 0 }, tickets: {} });
             }
         });
 
-        // 語音合成函式
         function speak(text) {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-TW'; // 設定為中文
-            utterance.rate = 0.9;     // 語速稍慢
-            window.speechSynthesis.speak(utterance);
+            window.speechSynthesis.cancel(); // 先卡掉上一句
+            const u = new SpeechSynthesisUtterance(text);
+            u.lang = 'zh-TW';
+            u.rate = 0.9;
+            window.speechSynthesis.speak(u);
         }
     </script>
-
 </body>
 
 </html>
