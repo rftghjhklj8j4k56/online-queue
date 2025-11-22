@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>顧客取號</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 350px;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        input {
+            width: 80%;
+            padding: 10px;
+            margin: 15px 0;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        button:disabled {
+            background: #ccc;
+        }
+
+        .info {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .ticket-box {
+            background: #e8f5e9;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 8px;
+            display: none;
+            border: 1px dashed #4caf50;
+        }
+
+        .ticket-number {
+            font-size: 2.5rem;
+            color: #2e7d32;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .current-status {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+
+        .big-status {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #d32f2f;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+        <h2>👋 歡迎光臨</h2>
+
+        <div id="input-section">
+            <p>請輸入您的稱呼以取號</p>
+            <input type="text" id="username" placeholder="例：陳先生 / 小美">
+            <button id="btn-take">領取號碼牌</button>
+        </div>
+
+        <div id="ticket-section" class="ticket-box">
+            <div>您的號碼</div>
+            <div class="ticket-number" id="my-number">--</div>
+            <div id="my-name-display"></div>
+            <p style="font-size:0.8rem; color:#888;">請留意下方叫號</p>
+        </div>
+
+        <div class="current-status">
+            <p>目前叫號</p>
+            <div class="big-status" id="display-current">0</div>
+            <p class="info">前方等待人數: <span id="display-waiting">0</span></p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getDatabase, ref, onValue, get, update, runTransaction }
+            from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+        // --- 請貼上你的 Firebase Config ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDnQEorAx3Ld2Pi3AF9lfdDeO6i5FYlZpo",
+            authDomain: "queue-6b0e1.firebaseapp.com",
+            databaseURL: "https://queue-6b0e1-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "queue-6b0e1",
+            storageBucket: "queue-6b0e1.firebasestorage.app",
+            messagingSenderId: "209096503140",
+            appId: "1:209096503140:web:4fef89cd385fa7258e5471"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        const btnTake = document.getElementById('btn-take');
+        const inputName = document.getElementById('username');
+        const inputSection = document.getElementById('input-section');
+        const ticketSection = document.getElementById('ticket-section');
+
+        let myTicket = null;
+
+        // 監聽目前叫號狀況
+        onValue(ref(db, 'status'), (snapshot) => {
+            const data = snapshot.val() || { current: 0, max: 0 };
+            document.getElementById('display-current').innerText = data.current;
+
+            let waiting = data.max - data.current;
+            document.getElementById('display-waiting').innerText = waiting > 0 ? waiting : 0;
+        });
+
+        // 取號功能
+        btnTake.addEventListener('click', async () => {
+            const name = inputName.value.trim();
+            if (!name) return alert("請輸入稱呼！");
+
+            btnTake.disabled = true;
+            btnTake.innerText = "取號中...";
+
+            // 使用 Transaction 確保多人同時點擊時號碼不會重複
+            const statusRef = ref(db, 'status');
+
+            try {
+                // 1. 取得新號碼並更新計數器
+                const result = await runTransaction(statusRef, (currentData) => {
+                    if (currentData === null) return { current: 0, max: 1 };
+                    return { ...currentData, max: currentData.max + 1 };
+                });
+
+                const newNumber = result.snapshot.val().max;
+
+                // 2. 將名字寫入資料庫
+                const updates = {};
+                updates[`tickets/${newNumber}`] = name;
+                await update(ref(db), updates);
+
+                // 3. 更新 UI
+                myTicket = newNumber;
+                document.getElementById('my-number').innerText = newNumber;
+                document.getElementById('my-name-display').innerText = `(${name})`;
+
+                inputSection.style.display = 'none';
+                ticketSection.style.display = 'block';
+
+            } catch (error) {
+                console.error(error);
+                alert("取號失敗，請重試");
+                btnTake.disabled = false;
+            }
+        });
+    </script>
+
+</body>
+
+</html>
